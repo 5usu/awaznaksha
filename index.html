@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Voice-Enabled GIS</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</head>
+<body>
+  <div id="map" style="width: screen; height: 800px;"></div>
+  <div>
+    <button id="voiceButton" style="padding: 10px 20px;">Push-to-Talk (Press Spacebar)</button>
+  </div>
+  <div>
+    <p>Transcribed Command: <span id="transcribedText"></span></p>
+  </div>
+  <script>
+    var map = L.map('map').setView([51.505, -0.09], 13);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    var roadLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+    var highwayLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+
+    function handleCommand(command) {
+      console.log("Handling command:", command);
+      command = command.toLowerCase();
+      if (command.includes('zoom to')) {
+        var zoomLevel = parseInt(command.split(' ').pop());
+        map.setZoom(zoomLevel);
+      } else if (command.includes('show road layer')) {
+        map.addLayer(roadLayer);
+      } else if (command.includes('hide road layer')) {
+        map.removeLayer(roadLayer);
+      } else if (command.includes('show highway layer')) {
+        map.addLayer(highwayLayer);
+      } else if (command.includes('hide highway layer')) {
+        map.removeLayer(highwayLayer);
+      } else if (command.includes('go to')) {
+        var location = command.split('go to ').pop();
+        goToLocation(location);
+      }
+    }
+
+    function goToLocation(location) {
+      var locations = {
+        'ahmedabad': [23.0225, 72.5714],
+        'new york': [40.7128, -74.0060],
+        'london': [51.5074, -0.1278]
+      };
+      if (locations[location]) {
+        map.setView(locations[location], 13);
+      } else {
+        alert('Location not recognized');
+      }
+    }
+
+    let mediaRecorder;
+    let audioChunks = [];
+
+    async function startRecording() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      
+      mediaRecorder.ondataavailable = (event) => {
+        audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstop = sendAudioToWhisper;
+
+      mediaRecorder.start();
+      document.getElementById('voiceButton').style.backgroundColor = 'red';
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        document.getElementById('voiceButton').style.backgroundColor = '';
+      }
+    }
+
+    async function sendAudioToWhisper() {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      audioChunks = [];
+
+      const formData = new FormData();
+      formData.append('file', audioBlob, 'audio.webm');
+      formData.append('temperature', '0.0');
+      formData.append('temperature_inc', '0.2');
+      formData.append('response_format', 'json');
+
+      try {
+        const response = await fetch('http://127.0.0.1:8080/inference', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        const transcription = result.text;
+        
+        document.getElementById('transcribedText').innerText = transcription;
+        handleCommand(transcription.toLowerCase());
+      } catch (error) {
+        console.error('Error sending audio to Whisper:', error);
+        document.getElementById('transcribedText').innerText = "Transcription error: " + error.message;
+      }
+    }
+
+    let isListening = false;
+
+    document.addEventListener('keydown', function(event) {
+      if (event.code === 'Space' && !event.repeat) {
+        if (!isListening) {
+          console.log("Starting listening");
+          startRecording();
+          isListening = true;
+        }
+        event.preventDefault();
+      }
+    });
+
+    document.addEventListener('keyup', function(event) {
+      if (event.code === 'Space') {
+        if (isListening) {
+          console.log("Stopping listening");
+          stopRecording();
+          isListening = false;
+        }
+        event.preventDefault();
+      }
+    });
+  </script>
+</body>
+</html>
